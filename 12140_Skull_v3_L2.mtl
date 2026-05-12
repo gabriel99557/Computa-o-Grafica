@@ -1,0 +1,186 @@
+import pyglet
+pyglet.options['shadow_window'] = False
+pyglet.window.Window(visible=False)
+
+import pygame
+from pygame.locals import *
+from OpenGL.GL import *
+from OpenGL.GLU import *
+from PIL import Image
+import math
+from pywavefront import Wavefront
+
+# --- Variáveis Globais ---
+# Começamos um pouco mais longe (z=-12) para ver tudo alinhado
+camera_x, camera_y, camera_z = 0, 2, -12
+yaw, pitch = 0, 0
+sensitivity = 0.1
+rot_x, rot_y = 0, 0
+
+# Coordenadas dos vértices para o Cubo (Chão)
+cube_vertices = [
+    (-1, -1, -1), (1, -1, -1), (1, 1, -1), (-1, 1, -1),
+    (-1, -1, 1), (1, -1, 1), (1, 1, 1), (-1, 1, 1)
+]
+
+def update_camera_direction():
+    rad_yaw = math.radians(yaw)
+    rad_pitch = math.radians(pitch)
+    dir_x = math.cos(rad_pitch) * math.sin(rad_yaw)
+    dir_y = math.sin(rad_pitch)
+    dir_z = math.cos(rad_pitch) * math.cos(rad_yaw)
+    return dir_x, dir_y, dir_z
+
+def load_texture(filename):
+    try:
+        img = Image.open(filename)
+        img = img.transpose(Image.FLIP_TOP_BOTTOM)
+        img_data = img.convert("RGBA").tobytes()
+        width, height = img.size
+        tex_id = glGenTextures(1)
+        glBindTexture(GL_TEXTURE_2D, tex_id)
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img_data)
+        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+        return tex_id
+    except Exception as e:
+        print(f"Erro ao carregar textura {filename}: {e}")
+        return None
+
+def draw_textured_cube(vertices):
+    glBegin(GL_QUADS)
+    # Face Frontal
+    glTexCoord2f(0, 0); glVertex3fv(vertices[4])
+    glTexCoord2f(1, 0); glVertex3fv(vertices[5])
+    glTexCoord2f(1, 1); glVertex3fv(vertices[6])
+    glTexCoord2f(0, 1); glVertex3fv(vertices[7])
+    # Face Traseira
+    glTexCoord2f(0, 0); glVertex3fv(vertices[0])
+    glTexCoord2f(1, 0); glVertex3fv(vertices[1])
+    glTexCoord2f(1, 1); glVertex3fv(vertices[2])
+    glTexCoord2f(0, 1); glVertex3fv(vertices[3])
+    # Topo
+    glTexCoord2f(0, 0); glVertex3fv(vertices[3])
+    glTexCoord2f(1, 0); glVertex3fv(vertices[2])
+    glTexCoord2f(1, 1); glVertex3fv(vertices[6])
+    glTexCoord2f(0, 1); glVertex3fv(vertices[7])
+    # Fundo
+    glTexCoord2f(0, 0); glVertex3fv(vertices[0])
+    glTexCoord2f(1, 0); glVertex3fv(vertices[1])
+    glTexCoord2f(1, 1); glVertex3fv(vertices[5])
+    glTexCoord2f(0, 1); glVertex3fv(vertices[4])
+    glEnd()
+
+def draw_obj_model(scene, tex_id):
+    if not scene: return
+    glEnable(GL_TEXTURE_2D)
+    glBindTexture(GL_TEXTURE_2D, tex_id)
+    for mat in scene.materials.values():
+        verts = mat.vertices
+        count = len(verts) // 8
+        array_type = (GLfloat * len(verts))(*verts)
+        glEnableClientState(GL_VERTEX_ARRAY)
+        glEnableClientState(GL_NORMAL_ARRAY)
+        glEnableClientState(GL_TEXTURE_COORD_ARRAY)
+        glInterleavedArrays(GL_T2F_N3F_V3F, 0, array_type) 
+        glDrawArrays(GL_TRIANGLES, 0, count)
+        glDisableClientState(GL_TEXTURE_COORD_ARRAY)
+        glDisableClientState(GL_NORMAL_ARRAY)
+        glDisableClientState(GL_VERTEX_ARRAY)
+
+def init_opengl(display):
+    glEnable(GL_DEPTH_TEST)
+    glEnable(GL_LIGHTING)
+    glEnable(GL_LIGHT0)
+    glLightfv(GL_LIGHT0, GL_POSITION, (5, 5, 5, 1))
+    glLightfv(GL_LIGHT0, GL_DIFFUSE, (1.0, 1.0, 1.0, 1))
+    glMatrixMode(GL_PROJECTION)
+    gluPerspective(45, (display[0] / display[1]), 0.1, 100.0)
+    glMatrixMode(GL_MODELVIEW)
+
+def main():
+    global camera_x, camera_y, camera_z, yaw, pitch
+    pygame.init()
+    display = (800, 600)
+    pygame.display.set_mode(display, DOUBLEBUF | OPENGL)
+    pygame.event.set_grab(True)
+    pygame.mouse.set_visible(False)
+    init_opengl(display)
+
+    # --- CARREGAMENTO DE ASSETS ---
+    tex_chao = load_texture("textura.jpg")
+    
+    # Gato
+    tex_gato = load_texture("OBJS/Cat/Cat_diffuse.jpg")
+    scene_gato = Wavefront('OBJS/Cat/Cat.obj', collect_faces=True, parse=True)
+
+    # Caveira
+    tex_obj1 = load_texture("OBJS/Cat/Skull/Skull.jpg")
+    scene_obj1 = Wavefront('OBJS/Cat/Skull/skull.obj', collect_faces=True, parse=True)
+
+    # Árvore
+    tex_obj2 = load_texture("OBJS/Tree/BarkDecidious0143_5_S.jpg")
+    scene_obj2 = Wavefront('OBJS/Tree/Tree1.obj', collect_faces=True, parse=True)
+
+    clock = pygame.time.Clock()
+    running = True
+
+    while running:
+        clock.tick(60)
+        for event in pygame.event.get():
+            if event.type == QUIT or (event.type == KEYDOWN and event.key == K_ESCAPE):
+                running = False
+
+        # Câmera e Mouse
+        dx, dy = pygame.mouse.get_rel()
+        yaw += dx * sensitivity
+        pitch += dy * sensitivity
+        dir_x, dir_y, dir_z = update_camera_direction()
+
+        # Teclas de Movimento
+        keys = pygame.key.get_pressed()
+        step = 0.2
+        if keys[K_w]: camera_x += dir_x * step; camera_y += dir_y * step; camera_z += dir_z * step
+        if keys[K_s]: camera_x -= dir_x * step; camera_y -= dir_y * step; camera_z -= dir_z * step
+
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+        glLoadIdentity()
+        gluLookAt(camera_x, camera_y, camera_z, camera_x + dir_x, camera_y + dir_y, camera_z + dir_z, 0, 1, 0)
+
+        # 1. DESENHO DO CHÃO (Cubo achatado)
+        glPushMatrix()
+        glBindTexture(GL_TEXTURE_2D, tex_chao)
+        glTranslatef(0, -1.1, 0) 
+        glScalef(10.0, 0.05, 10.0) # Muito largo e bem fino
+        draw_textured_cube(cube_vertices)
+        glPopMatrix()
+
+        # 2. GATO (Centro)
+        glPushMatrix()
+        glTranslatef(0, -1, 0)
+        glRotatef(-90, 1, 0, 0)
+        glScalef(0.02, 0.02, 0.02)
+        draw_obj_model(scene_gato, tex_gato)
+        glPopMatrix()
+
+        # 3. CAVEIRA (Esquerda)
+        glPushMatrix()
+        glTranslatef(-3.0, -1, 0)
+        glRotatef(45, 0, 1, 0) 
+        glScalef(0.005, 0.005, 0.005) 
+        draw_obj_model(scene_obj1, tex_obj1)
+        glPopMatrix()
+
+        # 4. ÁRVORE (Direita)
+        glPushMatrix()
+        glTranslatef(3.0, -1, 0)
+        glScalef(0.008, 0.008, 0.008) # Escala reduzida para alinhar
+        draw_obj_model(scene_obj2, tex_obj2)
+        glPopMatrix()
+
+        pygame.display.flip()
+
+    pygame.quit()
+
+if __name__ == "__main__":
+    main()
